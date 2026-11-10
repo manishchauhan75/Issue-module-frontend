@@ -8,24 +8,6 @@ import { Alert, Button, Card, ComingSoon, Spinner } from "../components/ui";
 const SNAPSHOT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const ABSOLUTE_PATH_RE = /^([A-Za-z]:[\\/]|\\\\|\/)/;
 
-const MODES = [
-  {
-    value: "normal",
-    label: "Validate",
-    help: "Run validation, or return stored results if this snapshot was already validated.",
-  },
-  {
-    value: "force",
-    label: "Force re-run",
-    help: "Validate every file again and replace the stored results.",
-  },
-  {
-    value: "rerun",
-    label: "Re-check pending",
-    help: "Validate only files with pending issues; fixed issues are marked fixed.",
-  },
-];
-
 function validate(snapshotId, workspacePath) {
   const errors = {};
   if (!snapshotId) errors.snapshotId = "Snapshot ID is required.";
@@ -41,7 +23,6 @@ export default function ValidationPage() {
   const snapshot = useSnapshot();
   const [snapshotId, setSnapshotId] = useState(snapshot.snapshotId);
   const [workspacePath, setWorkspacePath] = useState(snapshot.workspacePath);
-  const [mode, setMode] = useState("normal");
   const [fieldErrors, setFieldErrors] = useState({});
   const [errors, setErrors] = useState(null);
 
@@ -54,7 +35,7 @@ export default function ValidationPage() {
     setErrors(null);
     if (Object.keys(found).length) return;
 
-    const { results, errors } = await snapshot.runValidation({ snapshotId: id, workspacePath: path, mode });
+    const { results, errors } = await snapshot.runValidation({ snapshotId: id, workspacePath: path });
     if (Object.keys(results).length) navigate("/dashboard");
     else setErrors(errors);
   }
@@ -105,31 +86,6 @@ export default function ValidationPage() {
               <p className="mt-1 text-xs text-slate-500">Absolute path on the server running the Issues service.</p>
             )}
           </div>
-
-          <fieldset>
-            <legend className="text-sm font-medium text-slate-700">Mode</legend>
-            <div className="mt-2 grid gap-2 sm:grid-cols-3">
-              {MODES.map((m) => (
-                <label
-                  key={m.value}
-                  className={`cursor-pointer rounded-lg border p-3 text-sm transition ${
-                    mode === m.value ? "border-brand-600 bg-brand-50 ring-1 ring-brand-600" : "border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="mode"
-                    value={m.value}
-                    checked={mode === m.value}
-                    onChange={() => setMode(m.value)}
-                    className="sr-only"
-                  />
-                  <span className="font-medium text-slate-900">{m.label}</span>
-                  <span className="mt-1 block text-xs text-slate-500">{m.help}</span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
 
           <div>
             <p className="text-sm font-medium text-slate-700">Modules</p>

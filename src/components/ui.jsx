@@ -78,7 +78,10 @@ export const SEVERITY_ORDER = ["error", "warning", "info"];
 export function SeverityBadge({ severity }) {
   const s = SEVERITY[severity] || { badge: "bg-slate-100 text-slate-700 ring-slate-200" };
   return (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium capitalize ring-1 ring-inset ${s.badge}`}>
+    // Fixed size so Error/Warning/Info badges match and never stretch to a wrapped description's height.
+    <span
+      className={`inline-flex h-6 w-20 shrink-0 items-center justify-center self-start rounded-full text-xs leading-none font-medium whitespace-nowrap capitalize ring-1 ring-inset ${s.badge}`}
+    >
       {severity}
     </span>
   );

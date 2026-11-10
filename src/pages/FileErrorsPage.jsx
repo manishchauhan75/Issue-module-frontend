@@ -67,13 +67,7 @@ function IssueDetails({ issues }) {
       {issues.map((issue) => (
         <li key={issue.finding_key} className="flex gap-3 py-2">
           <SeverityBadge severity={issue.severity} />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm text-slate-800">{issue.description}</p>
-            <p className="mt-0.5 font-mono text-xs text-slate-500">
-              {issue.rule_code && `${issue.rule_code} · `}
-              {issue.schematron}
-            </p>
-          </div>
+          <p className="min-w-0 flex-1 text-sm text-slate-800">{issue.description}</p>
         </li>
       ))}
     </ul>
@@ -356,11 +350,9 @@ export default function FileErrorsPage({ moduleKey }) {
                   <SeverityBadge severity={issue.severity} />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-slate-800">{issue.description}</p>
-                    <p className="mt-0.5 font-mono text-xs break-all text-slate-500">
-                      {issue.rule_code && `${issue.rule_code} · `}
-                      {issue.schematron}
-                      {(issue.xpath || issue.location) && ` · ${issue.xpath || issue.location}`}
-                    </p>
+                    {(issue.xpath || issue.location) && (
+                      <p className="mt-0.5 font-mono text-xs break-all text-slate-500">{issue.xpath || issue.location}</p>
+                    )}
                   </div>
                 </div>
               </li>

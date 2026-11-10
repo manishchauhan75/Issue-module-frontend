@@ -13,7 +13,7 @@ export default function Layout() {
   return (
     <div className="min-h-screen">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 sm:px-8">
+        <div className="mx-auto flex w-[90%] flex-wrap items-center gap-x-6 gap-y-2 py-3">
           <span className="text-lg font-semibold tracking-tight text-brand-700">metR Issues</span>
           <nav className="flex flex-wrap gap-1">
             <NavLink to="/" end className={linkClass}>
@@ -39,7 +39,7 @@ export default function Layout() {
           )}
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-8">
+      <main className="mx-auto w-[90%] py-8">
         <Outlet />
       </main>
     </div>

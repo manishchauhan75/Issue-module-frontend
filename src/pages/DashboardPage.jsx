@@ -23,30 +23,6 @@ function Stats({ result }) {
   );
 }
 
-function SchematronBreakdown({ counts }) {
-  const entries = Object.entries(counts || {}).sort((a, b) => b[1] - a[1]);
-  if (!entries.length) return null;
-  const max = entries[0][1] || 1;
-  return (
-    <div>
-      <h3 className="text-sm font-medium text-slate-700">Issues by Schematron</h3>
-      <ul className="mt-2 space-y-2">
-        {entries.map(([name, count]) => (
-          <li key={name} className="grid grid-cols-[minmax(0,14rem)_1fr_auto] items-center gap-3 text-sm">
-            <span className="truncate font-mono text-xs text-slate-600" title={name}>
-              {name}
-            </span>
-            <span className="h-2 overflow-hidden rounded-full bg-slate-100">
-              <span className="block h-full rounded-full bg-brand-600" style={{ width: `${(count / max) * 100}%` }} />
-            </span>
-            <span className="w-12 text-right tabular-nums text-slate-700">{fmt(count)}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 function RerunSummary({ summary }) {
   if (!summary) return null;
   const items = [
@@ -97,7 +73,7 @@ function FailedFiles({ files }) {
   );
 }
 
-function SchemaDetails({ result, onRerun, running }) {
+function SchemaDetails({ result }) {
   return (
     <div className="mt-6 space-y-6 border-t border-slate-100 pt-6">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-600">
@@ -113,29 +89,15 @@ function SchemaDetails({ result, onRerun, running }) {
           </span>
         )}
         {result.completed_at && <span>Completed {new Date(result.completed_at).toLocaleString()}</span>}
-        <span className="ml-auto flex gap-2">
-          <Button variant="secondary" size="sm" disabled={running} onClick={() => onRerun("rerun")}>
-            Re-check pending
-          </Button>
-          <Button variant="secondary" size="sm" disabled={running} onClick={() => onRerun("force")}>
-            Force re-run
-          </Button>
-        </span>
       </div>
       {result.message && <p className="text-sm text-slate-500">{result.message}</p>}
       <RerunSummary summary={result.rerun_summary} />
-      <SchematronBreakdown counts={result.findings_by_schematron} />
       <FailedFiles files={result.failed_files} />
-      {result.report_path && (
-        <p className="text-xs text-slate-500">
-          CSV report: <span className="font-mono">{result.report_path}</span>
-        </p>
-      )}
     </div>
   );
 }
 
-function ModuleSection({ module, result, error, onRerun, running }) {
+function ModuleSection({ module, result, error }) {
   const [open, setOpen] = useState(true);
   return (
     <Card className="p-6">
@@ -168,7 +130,7 @@ function ModuleSection({ module, result, error, onRerun, running }) {
           {!module.enabled && (
             <p className="mt-4 text-sm text-slate-500">This module is not connected yet. Results will appear here once its API is available.</p>
           )}
-          {module.key === "schema" && result && <SchemaDetails result={result} onRerun={onRerun} running={running} />}
+          {module.key === "schema" && result && <SchemaDetails result={result} />}
         </div>
       )}
     </Card>
@@ -176,13 +138,11 @@ function ModuleSection({ module, result, error, onRerun, running }) {
 }
 
 export default function DashboardPage() {
-  const { snapshotId, workspacePath, results, errors, running, runValidation } = useSnapshot();
+  const { results, errors, running } = useSnapshot();
   const available = Object.values(results);
   const totalIssues = available.reduce((sum, r) => sum + (r.total_findings || 0), 0);
   const topics = results.schema?.total_files;
   const firstEnabled = MODULES.find((m) => m.enabled);
-
-  const rerun = (moduleKey, mode) => runValidation({ snapshotId, workspacePath, mode, only: [moduleKey] });
 
   return (
     <div className="space-y-6">
@@ -212,8 +172,6 @@ export default function DashboardPage() {
           module={m}
           result={results[m.key]}
           error={errors[m.key]}
-          running={running}
-          onRerun={(mode) => rerun(m.key, mode)}
         />
       ))}
     </div>

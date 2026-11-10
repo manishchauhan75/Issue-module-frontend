@@ -38,9 +38,7 @@ function IssueTable({ issues, lineHref }) {
         <thead>
           <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
             <th className="py-2 pr-4 font-medium">Severity</th>
-            <th className="py-2 pr-4 font-medium">Rule</th>
             <th className="py-2 pr-4 font-medium">Description</th>
-            <th className="py-2 pr-4 font-medium">Schematron</th>
             <th className="py-2 text-right font-medium">Line</th>
           </tr>
         </thead>
@@ -50,16 +48,16 @@ function IssueTable({ issues, lineHref }) {
               <td className="py-2 pr-4">
                 <SeverityBadge severity={issue.severity} />
               </td>
-              <td className="py-2 pr-4 font-mono text-xs whitespace-nowrap text-slate-600">{issue.rule_code || "—"}</td>
               <td className="py-2 pr-4 text-slate-800">{issue.description}</td>
-              <td className="py-2 pr-4 font-mono text-xs whitespace-nowrap text-slate-500">{issue.schematron}</td>
               <td className="py-2 text-right tabular-nums text-slate-500">
-                {issue.line && lineHref ? (
+                {!issue.line ? (
+                  "—"
+                ) : lineHref ? (
                   <Link to={lineHref(issue.line)} className="text-brand-700 hover:underline">
                     {issue.line}
                   </Link>
                 ) : (
-                  issue.line ?? "—"
+                  issue.line
                 )}
               </td>
             </tr>
@@ -123,8 +121,8 @@ function ElementGroup({ group, canFix, fixing, onFix, onFilter, lineHref }) {
   );
 }
 
-function FileCard({ file, defaultOpen, ...groupProps }) {
-  const [open, setOpen] = useState(defaultOpen);
+function FileCard({ file, ...groupProps }) {
+  const [open, setOpen] = useState(false);
   return (
     <Card>
       <div className="flex items-center gap-3 px-5 py-4">
@@ -344,11 +342,10 @@ export default function IssueGroupsPage({ moduleKey }) {
 
       {data && (
         <div className={`space-y-4 transition-opacity ${loading ? "opacity-60" : ""}`}>
-          {data.files.map((file, i) => (
+          {data.files.map((file) => (
             <FileCard
               key={file.file_id + file.file_path}
               file={file}
-              defaultOpen={i < 3}
               canFix={module.features.microXslt}
               fileHref={fileHref}
               fixingKey={fixingKey}
