@@ -12,7 +12,26 @@ function StatCard({ value, label, tone = "text-slate-900" }) {
   );
 }
 
-function Stats({ result }) {
+const LINK_TYPES = [
+  ["image", "Images"],
+  ["external", "External"],
+  ["cross_reference", "Cross-references"],
+  ["keyref", "Keyrefs"],
+  ["conref", "Conrefs"],
+];
+
+function Stats({ module, result }) {
+  // Broken links have no severities: total plus one card per link type.
+  if (module.key === "brokenLinks") {
+    return (
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        <StatCard value={result?.total_findings} label="Total Broken Links" />
+        {LINK_TYPES.map(([key, label]) => (
+          <StatCard key={key} value={result?.broken_links?.[key]} label={label} />
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
       <StatCard value={result?.total_findings} label="Total Issues" />
@@ -81,7 +100,8 @@ function SchemaDetails({ result }) {
           Status <StatusBadge status={result.status} />
         </span>
         <span>
-          Files validated <b className="text-slate-900">{fmt(result.files_validated)}</b> / {fmt(result.total_files)}
+          Files validated <b className="text-slate-900">{fmt(result.files_validated ?? result.files_checked)}</b> /{" "}
+          {fmt(result.total_files)}
         </span>
         {result.files_failed > 0 && (
           <span>
@@ -126,11 +146,11 @@ function ModuleSection({ module, result, error }) {
               <Alert>{error}</Alert>
             </div>
           )}
-          <Stats result={result} />
+          <Stats module={module} result={result} />
           {!module.enabled && (
             <p className="mt-4 text-sm text-slate-500">This module is not connected yet. Results will appear here once its API is available.</p>
           )}
-          {module.key === "schema" && result && <SchemaDetails result={result} />}
+          {module.enabled && result && <SchemaDetails result={result} />}
         </div>
       )}
     </Card>

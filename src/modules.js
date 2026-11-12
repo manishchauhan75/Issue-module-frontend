@@ -8,7 +8,7 @@ import {
   applyMicroXslt,
   applyMasterXslt,
 } from "./api/schemaIssues";
-import { validateBrokenLinks, getBrokenLinkGroups } from "./api/brokenLinks";
+import { validateBrokenLinks, getBrokenLinkGroups, getBrokenLinkFileErrors } from "./api/brokenLinks";
 import { validateMissingMetadata, getMissingMetadataGroups } from "./api/missingMetadata";
 
 export const MODULES = [
@@ -31,9 +31,12 @@ export const MODULES = [
     title: "Broken Links",
     viewAllLabel: "View All Broken Links",
     path: "/issues/broken-links",
-    enabled: false,
+    enabled: true,
     validate: validateBrokenLinks,
     getGroups: getBrokenLinkGroups,
+    getFileErrors: getBrokenLinkFileErrors,
+    // Broken links have no severity: the file view filters and colours them by link type.
+    viewBy: "link_type",
     features: {},
   },
   {

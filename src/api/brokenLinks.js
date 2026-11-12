@@ -1,18 +1,35 @@
-// Broken Links module — backend not built yet.
-// Keep the same shapes as the schema module so the UI needs no changes:
-//   validate -> { total_findings, total_errors, total_warnings, total_info, ... }
-//   getGroups -> { total_files, total_issues, limit, offset, files: [FileGroup] }
+import { request } from "./client";
 
-import { ApiError } from "./client";
+const BASE = "/api/v1/issues/broken-link";
 
-export async function validateBrokenLinks({ snapshotId, workspacePath }) {
-  void snapshotId, workspacePath;
-  throw new ApiError(501, "Broken link validation is not available yet.");
-  // return request("/api/v1/issues/links/validation", { method: "POST", body: { snapshot_id: snapshotId, workspace_path: workspacePath } });
+/**
+ * mode: "rerun" re-checks only files with pending broken links; any other mode
+ * returns the snapshot's stored results, validating only a new snapshot
+ * (this API has no force re-validation).
+ */
+export function validateBrokenLinks({ snapshotId, workspacePath, mode = "normal" }) {
+  return request(`${BASE}/validation`, {
+    method: "POST",
+    body: {
+      snapshot_id: snapshotId,
+      workspace_path: workspacePath,
+      rerun: mode === "rerun",
+    },
+  });
 }
 
-export async function getBrokenLinkGroups({ snapshotId, limit, offset }) {
-  void snapshotId, limit, offset;
-  throw new ApiError(501, "Broken link groups are not available yet.");
-  // return request("/api/v1/issues/links/groups", { query: { snapshot_id: snapshotId, limit, offset } });
+/** One file's content with its pending broken links as highlight markers on the broken attributes. */
+export function getBrokenLinkFileErrors({ snapshotId, fileId, signal }) {
+  return request(`${BASE}/view-broken-links`, {
+    query: { snapshot_id: snapshotId, file_id: fileId },
+    signal,
+  });
+}
+
+/** Groups are per file, then per link type (sent back in "element", like the schema groups). */
+export function getBrokenLinkGroups({ snapshotId, fileId, element, limit = 20, offset = 0, signal }) {
+  return request(`${BASE}/groups`, {
+    query: { snapshot_id: snapshotId, file_id: fileId, link_type: element, limit, offset },
+    signal,
+  });
 }

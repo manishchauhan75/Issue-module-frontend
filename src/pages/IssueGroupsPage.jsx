@@ -39,7 +39,16 @@ function sessionSet(key, value) {
 
 function SeverityCounts({ elements }) {
   const counts = {};
-  elements.forEach((g) => g.issues.forEach((i) => (counts[i.severity] = (counts[i.severity] || 0) + 1)));
+  elements.forEach((g) => g.issues.forEach((i) => i.severity && (counts[i.severity] = (counts[i.severity] || 0) + 1)));
+  if (!Object.keys(counts).length) {
+    // Modules without severities (broken links): just the number of issues.
+    const total = elements.reduce((sum, g) => sum + g.issue_count, 0);
+    return (
+      <span className="ml-auto rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
+        {fmt(total)} issue{total === 1 ? "" : "s"}
+      </span>
+    );
+  }
   return (
     <span className="ml-auto flex gap-1.5">
       {SEVERITY_ORDER.filter((s) => counts[s]).map((s) => (
@@ -52,12 +61,17 @@ function SeverityCounts({ elements }) {
 }
 
 function IssueTable({ issues, lineHref }) {
+  // Broken-link findings carry the reference as written and why it failed.
+  const isLink = issues.some((i) => i.broken_link !== undefined);
+  const hasSeverity = issues.some((i) => i.severity);
   return (
     <div className="overflow-x-auto">
       <table className="min-w-full text-sm">
         <thead>
           <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
-            <th className="py-2 pr-4 font-medium">Severity</th>
+            {hasSeverity && <th className="py-2 pr-4 font-medium">Severity</th>}
+            {isLink && <th className="py-2 pr-4 font-medium">Broken link</th>}
+            {isLink && <th className="py-2 pr-4 font-medium">Reason</th>}
             <th className="py-2 pr-4 font-medium">Description</th>
             <th className="py-2 text-right font-medium">Line</th>
           </tr>
@@ -65,9 +79,17 @@ function IssueTable({ issues, lineHref }) {
         <tbody className="divide-y divide-slate-100">
           {issues.map((issue) => (
             <tr key={issue.finding_key} className="align-top">
-              <td className="py-2 pr-4">
-                <SeverityBadge severity={issue.severity} />
-              </td>
+              {hasSeverity && (
+                <td className="py-2 pr-4">
+                  <SeverityBadge severity={issue.severity} />
+                </td>
+              )}
+              {isLink && (
+                <td className="py-2 pr-4 font-mono text-xs break-all text-slate-800" title={issue.resolved_target || undefined}>
+                  {issue.broken_link || "(empty)"}
+                </td>
+              )}
+              {isLink && <td className="py-2 pr-4 font-mono text-xs whitespace-nowrap text-slate-600">{issue.reason}</td>}
               <td className="py-2 pr-4 text-slate-800">{issue.description}</td>
               <td className="py-2 text-right tabular-nums text-slate-500">
                 {!issue.line ? (
@@ -88,7 +110,7 @@ function IssueTable({ issues, lineHref }) {
   );
 }
 
-function ElementGroup({ group, canFix, fixing, applied, onFix, lineHref }) {
+function ElementGroup({ group, canFix, showFix, fixing, applied, onFix, lineHref }) {
   const [open, setOpen] = useState(false);
   const fixable = canFix && group.xslt_available && !applied;
   return (
@@ -116,17 +138,19 @@ function ElementGroup({ group, canFix, fixing, applied, onFix, lineHref }) {
               {group.xslt}
             </span>
           )}
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={!fixable || fixing}
-            onClick={onFix}
-            title={applied ? "Already applied to this file; these issues remain after the re-check." : undefined}
-          >
-            {fixing && <Spinner className="h-3.5 w-3.5" />}
-            {applied ? "Micro-XSLT applied" : "Apply micro-XSLT"}
-          </Button>
-          {!canFix && <ComingSoon />}
+          {showFix && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!fixable || fixing}
+              onClick={onFix}
+              title={applied ? "Already applied to this file; these issues remain after the re-check." : undefined}
+            >
+              {fixing && <Spinner className="h-3.5 w-3.5" />}
+              {applied ? "Micro-XSLT applied" : "Apply micro-XSLT"}
+            </Button>
+          )}
+          {showFix && !canFix && <ComingSoon />}
         </div>
       </div>
       {open && (
@@ -171,6 +195,7 @@ function FileCard({ file, open, onToggle, ...groupProps }) {
               fixing={groupProps.fixingKey === appliedKey(file.file_id, g.element)}
               applied={groupProps.applied.has(appliedKey(file.file_id, g.element))}
               canFix={groupProps.canFix}
+              showFix={groupProps.showFix}
               lineHref={groupProps.fileHref && ((line) => groupProps.fileHref(file, line))}
               onFix={() => groupProps.onFix(file, g)}
             />
@@ -440,6 +465,7 @@ export default function IssueGroupsPage({ moduleKey }) {
               open={openFiles.includes(file.file_id)}
               onToggle={() => toggleFile(file.file_id)}
               canFix={module.features.microXslt}
+              showFix={!!module.fixElement}
               fileHref={fileHref}
               fixingKey={fixingKey}
               applied={applied}

@@ -7,24 +7,50 @@ import { Alert, Button, Card, SEVERITY, SEVERITY_ORDER, SeverityBadge, Spinner, 
 
 const markerKey = (m) => `${m.start_line}:${m.start_column}`;
 
+const LINK_TYPES = [
+  ["image", "Images"],
+  ["external", "External"],
+  ["cross_reference", "Cross-references"],
+  ["keyref", "Keyrefs"],
+  ["conref", "Conrefs"],
+];
+
+// How a module's issues are filtered and coloured: by severity (schema) or by
+// link type (broken links, which have no severity and are all shown as errors).
+const VIEWS = {
+  severity: {
+    field: "severity",
+    noun: "issue",
+    counts: (data) => data.counts,
+    options: SEVERITY_ORDER.map((s) => ({ key: s, label: SEVERITY[s].label, tone: SEVERITY[s] })),
+  },
+  link_type: {
+    field: "link_type",
+    noun: "broken link",
+    counts: (data) => data.broken_links,
+    options: LINK_TYPES.map(([key, label]) => ({ key, label, tone: SEVERITY.error })),
+  },
+};
+
 /**
- * Markers narrowed to the visible severities, each with the per-line ranges it covers.
+ * Markers narrowed to the visible options, each with the per-line ranges it covers.
+ * A marker takes the tone (and rank) of the first option, in view order, among its issues.
  * API columns are 1-based code-point indexes; ranges here are 0-based, end exclusive.
  */
-function buildView(markers, active) {
+function buildView(markers, active, view) {
   const visible = [];
   const byLine = new Map();
   for (const m of markers) {
-    const issues = m.issues.filter((i) => active.has(i.severity));
+    const issues = m.issues.filter((i) => active.has(i[view.field]));
     if (!issues.length) continue;
-    const severity = SEVERITY_ORDER.find((s) => issues.some((i) => i.severity === s)) || m.severity;
-    const view = { ...m, key: markerKey(m), issues, severity };
-    visible.push(view);
+    const rank = view.options.findIndex((o) => issues.some((i) => i[view.field] === o.key));
+    const shown = { ...m, key: markerKey(m), issues, rank, tone: view.options[rank].tone };
+    visible.push(shown);
     for (let ln = m.start_line; ln <= m.end_line; ln++) {
       const start = ln === m.start_line ? m.start_column - 1 : 0;
       const end = ln === m.end_line ? m.end_column - 1 : Infinity;
       if (!byLine.has(ln)) byLine.set(ln, []);
-      byLine.get(ln).push({ start, end, marker: view });
+      byLine.get(ln).push({ start, end, marker: shown });
     }
   }
   byLine.forEach((segs) => segs.sort((a, b) => a.start - b.start));
@@ -41,7 +67,7 @@ function LineContent({ text, segments, selectedKey, onSelect }) {
     const e = Math.min(seg.end, chars.length);
     if (s > pos) out.push(chars.slice(pos, s).join(""));
     if (e > s) {
-      const sev = SEVERITY[seg.marker.severity] || SEVERITY.info;
+      const sev = seg.marker.tone;
       const active = seg.marker.key === selectedKey;
       out.push(
         <mark
@@ -62,13 +88,37 @@ function LineContent({ text, segments, selectedKey, onSelect }) {
   return out.length ? out : " ";
 }
 
+/** Severity badge for schema issues; link-type badge for broken links. */
+function IssueBadge({ issue }) {
+  if (issue.severity) return <SeverityBadge severity={issue.severity} />;
+  const label = LINK_TYPES.find(([key]) => key === issue.link_type)?.[1] || issue.link_type;
+  return (
+    <span className="inline-flex h-6 shrink-0 items-center self-start rounded-full bg-red-50 px-2.5 text-xs font-medium whitespace-nowrap text-red-700 ring-1 ring-red-200 ring-inset">
+      {label}
+    </span>
+  );
+}
+
+/** The broken value as written and why it is broken (broken links only). */
+function LinkDetail({ issue }) {
+  if (issue.broken_link === undefined) return null;
+  return (
+    <p className="mt-0.5 font-mono text-xs break-all text-slate-500">
+      {issue.attribute}="{issue.broken_link}" · {issue.reason}
+    </p>
+  );
+}
+
 function IssueDetails({ issues }) {
   return (
     <ul className="divide-y divide-slate-100">
       {issues.map((issue) => (
         <li key={issue.finding_key} className="flex gap-3 py-2">
-          <SeverityBadge severity={issue.severity} />
-          <p className="min-w-0 flex-1 text-sm text-slate-800">{issue.description}</p>
+          <IssueBadge issue={issue} />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm text-slate-800">{issue.description}</p>
+            <LinkDetail issue={issue} />
+          </div>
         </li>
       ))}
     </ul>
@@ -77,7 +127,7 @@ function IssueDetails({ issues }) {
 
 /** Popover shown under the selected marker's last line. */
 function InlineAnnotation({ marker }) {
-  const sev = SEVERITY[marker.severity] || SEVERITY.info;
+  const sev = marker.tone;
   return (
     <div className="sticky left-0 w-[min(48rem,calc(100vw-4rem))] py-1.5 pl-14 font-sans whitespace-normal">
       <div className={`rounded-md border border-l-4 border-slate-200 bg-white px-3 shadow-sm ${sev.border}`}>
@@ -87,26 +137,26 @@ function InlineAnnotation({ marker }) {
   );
 }
 
-function SeverityFilter({ counts, active, onToggle }) {
+function IssueFilter({ options, counts, active, onToggle }) {
   return (
-    <div className="grid grid-cols-3 gap-3">
-      {SEVERITY_ORDER.map((s) => {
-        const on = active.has(s);
+    <div className={`grid gap-3 ${options.length > 3 ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5" : "grid-cols-3"}`}>
+      {options.map(({ key, label, tone }) => {
+        const on = active.has(key);
         return (
           <button
-            key={s}
+            key={key}
             type="button"
-            onClick={() => onToggle(s)}
+            onClick={() => onToggle(key)}
             aria-pressed={on}
             className={`rounded-lg border px-4 py-3 text-left transition ${
               on ? "border-slate-200 bg-white" : "border-dashed border-slate-200 bg-slate-50 opacity-50"
             }`}
           >
             <span className="flex items-center gap-2">
-              <span className={`h-2.5 w-2.5 rounded-full ${SEVERITY[s].dot}`} />
-              <span className={`text-2xl font-bold ${SEVERITY[s].text}`}>{fmt(counts?.[s] ?? 0)}</span>
+              <span className={`h-2.5 w-2.5 rounded-full ${tone.dot}`} />
+              <span className={`text-2xl font-bold ${tone.text}`}>{fmt(counts?.[key] ?? 0)}</span>
             </span>
-            <span className="mt-0.5 block text-sm text-slate-500">{SEVERITY[s].label}</span>
+            <span className="mt-0.5 block text-sm text-slate-500">{label}</span>
           </button>
         );
       })}
@@ -174,11 +224,12 @@ export default function FileErrorsPage({ moduleKey }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { snapshotId } = useSnapshot();
+  const view = VIEWS[module.viewBy || "severity"];
 
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [active, setActive] = useState(() => new Set(SEVERITY_ORDER));
+  const [active, setActive] = useState(() => new Set(view.options.map((o) => o.key)));
   const [selectedKey, setSelectedKey] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
   const codeRef = useRef(null);
@@ -244,20 +295,20 @@ export default function FileErrorsPage({ moduleKey }) {
     [groups, applied, fileId]
   );
 
-  const { visible, byLine } = useMemo(() => buildView(data?.markers || [], active), [data, active]);
+  const { visible, byLine } = useMemo(() => buildView(data?.markers || [], active, view), [data, active, view]);
   const unpositioned = useMemo(
-    () => (data?.unpositioned || []).filter((i) => active.has(i.severity)),
-    [data, active]
+    () => (data?.unpositioned || []).filter((i) => active.has(i[view.field])),
+    [data, active, view]
   );
   const selected = visible.find((m) => m.key === selectedKey) || null;
   const selectedIndex = selected ? visible.indexOf(selected) : -1;
 
-  // Severity of the most severe marker starting on each line, for the gutter dot.
+  // The highest-ranked marker starting on each line (most severe, for schema), for the gutter dot.
   const gutter = useMemo(() => {
     const map = new Map();
     for (const m of visible) {
       const prev = map.get(m.start_line);
-      if (!prev || SEVERITY_ORDER.indexOf(m.severity) < SEVERITY_ORDER.indexOf(prev)) map.set(m.start_line, m.severity);
+      if (!prev || m.rank < prev.rank) map.set(m.start_line, m);
     }
     return map;
   }, [visible]);
@@ -285,11 +336,11 @@ export default function FileErrorsPage({ moduleKey }) {
     requestAnimationFrame(() => (m ? select(markerKey(m), { scrollCode: true }) : scrollToLine(line)));
   }, [data]); // only on load, not on every selection change
 
-  function toggle(severity) {
+  function toggle(key) {
     setActive((prev) => {
       const next = new Set(prev);
-      if (next.has(severity)) next.delete(severity);
-      else next.add(severity);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
@@ -342,7 +393,8 @@ export default function FileErrorsPage({ moduleKey }) {
             {data.relative_path}
           </p>
           <p className="mt-1 text-sm text-slate-500">
-            {fmt(data.total_issues)} pending issue{data.total_issues === 1 ? "" : "s"} · {fmt(data.lines.length)} lines
+            {fmt(data.total_issues)} pending {view.noun}
+            {data.total_issues === 1 ? "" : "s"} · {fmt(data.lines.length)} lines
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -371,7 +423,7 @@ export default function FileErrorsPage({ moduleKey }) {
         </Alert>
       )}
 
-      <SeverityFilter counts={data.counts} active={active} onToggle={toggle} />
+      <IssueFilter options={view.options} counts={view.counts(data)} active={active} onToggle={toggle} />
 
       {canFix && <MicroXsltPanel groups={groups} applied={appliedHere} fixing={fixing} onApply={applyMicro} />}
 
@@ -394,7 +446,7 @@ export default function FileErrorsPage({ moduleKey }) {
             <div className="min-w-max py-2">
               {data.lines.map((text, i) => {
                 const n = i + 1;
-                const dot = gutter.get(n);
+                const dot = gutter.get(n)?.tone;
                 const bg = selected && n >= selected.start_line && n <= selected.end_line ? "bg-slate-50" : "bg-white";
                 return (
                   <Fragment key={n}>
@@ -404,7 +456,7 @@ export default function FileErrorsPage({ moduleKey }) {
                       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 1.5rem" }}
                     >
                       <span className={`sticky left-0 flex w-14 shrink-0 items-center justify-end gap-1.5 pr-3 text-slate-400 select-none ${bg}`}>
-                        {dot && <span className={`h-2 w-2 rounded-full ${SEVERITY[dot].dot}`} />}
+                        {dot && <span className={`h-2 w-2 rounded-full ${dot.dot}`} />}
                         {n}
                       </span>
                       <span className="pr-6 whitespace-pre text-slate-800">
@@ -424,7 +476,7 @@ export default function FileErrorsPage({ moduleKey }) {
           <ul ref={listRef} className="flex-1 divide-y divide-slate-100 overflow-auto">
             {!visible.length && <li className="px-4 py-6 text-center text-sm text-slate-500">No highlighted issues.</li>}
             {visible.map((m) => {
-              const sev = SEVERITY[m.severity] || SEVERITY.info;
+              const sev = m.tone;
               const on = m.key === selectedKey;
               return (
                 <li key={m.key} data-key={m.key}>
@@ -440,6 +492,7 @@ export default function FileErrorsPage({ moduleKey }) {
                         Ln {m.start_line}, Col {m.start_column}
                       </span>
                       {m.element && <code className="font-semibold text-brand-700">&lt;{m.element}&gt;</code>}
+                      {m.attribute && <code className="text-slate-500">@{m.attribute}</code>}
                       {m.issues.length > 1 && <span className="ml-auto">{m.issues.length} issues</span>}
                     </span>
                     <span className={`mt-1 block text-sm ${on ? "" : "line-clamp-2"} ${sev.text}`}>
@@ -461,12 +514,15 @@ export default function FileErrorsPage({ moduleKey }) {
             {unpositioned.map((issue) => (
               <li
                 key={issue.finding_key}
-                className={`rounded-md border border-l-4 border-slate-200 px-3 py-2 ${(SEVERITY[issue.severity] || SEVERITY.info).border}`}
+                className={`rounded-md border border-l-4 border-slate-200 px-3 py-2 ${
+                  (view.options.find((o) => o.key === issue[view.field])?.tone || SEVERITY.info).border
+                }`}
               >
                 <div className="flex items-start gap-3">
-                  <SeverityBadge severity={issue.severity} />
+                  <IssueBadge issue={issue} />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-slate-800">{issue.description}</p>
+                    <LinkDetail issue={issue} />
                     {(issue.xpath || issue.location) && (
                       <p className="mt-0.5 font-mono text-xs break-all text-slate-500">{issue.xpath || issue.location}</p>
                     )}
