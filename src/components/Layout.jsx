@@ -12,7 +12,7 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen">
-      <header className="border-b border-slate-200 bg-white">
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
         <div className="mx-auto flex w-[90%] flex-wrap items-center gap-x-6 gap-y-2 py-3">
           <span className="text-lg font-semibold tracking-tight text-brand-700">metR Issues</span>
           <nav className="flex flex-wrap gap-1">

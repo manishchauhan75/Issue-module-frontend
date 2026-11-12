@@ -1,8 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useSnapshot } from "../context/SnapshotContext";
 import { moduleByKey } from "../modules";
-import { Alert, Button, ButtonLink, Card, SEVERITY, SEVERITY_ORDER, SeverityBadge, Spinner, fmt } from "../components/ui";
+import { XSLT_TONE, appliedKey, loadApplied, saveApplied, xsltSummary } from "../xsltRuns";
+import { Alert, Button, Card, SEVERITY, SEVERITY_ORDER, SeverityBadge, Spinner, fmt } from "../components/ui";
 
 const markerKey = (m) => `${m.start_line}:${m.start_column}`;
 
@@ -113,10 +114,65 @@ function SeverityFilter({ counts, active, onToggle }) {
   );
 }
 
+/** One row per element with pending issues in this file, each with its micro-XSLT. */
+function MicroXsltPanel({ groups, applied, fixing, onApply }) {
+  if (!groups?.length) return null;
+  return (
+    <Card className="p-5">
+      <h2 className="text-sm font-semibold">Fix with micro-XSLT</h2>
+      <p className="mt-0.5 text-xs text-slate-500">
+        Applies the element's stylesheet to this file only. Issues stay pending until a re-check.
+      </p>
+      <ul className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-200">
+        {groups.map((g) => {
+          const done = applied.has(g.element);
+          const busy = fixing === g.element;
+          return (
+            <li key={g.element ?? "__unknown"} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+              {g.element ? (
+                <code className="rounded bg-white px-1.5 py-0.5 text-sm font-semibold text-brand-700 ring-1 ring-slate-200">
+                  &lt;{g.element}&gt;
+                </code>
+              ) : (
+                <span className="text-sm font-medium text-slate-500">Unknown element</span>
+              )}
+              <span className="text-sm text-slate-500">
+                {g.issue_count} issue{g.issue_count === 1 ? "" : "s"}
+              </span>
+              <span className="ml-auto flex items-center gap-2">
+                {g.xslt && (
+                  <span
+                    className={`font-mono text-xs ${g.xslt_available ? "text-emerald-700" : "text-slate-400 line-through"}`}
+                    title={g.xslt_available ? "Micro-XSLT available" : "No micro-XSLT for this element yet"}
+                  >
+                    {g.xslt}
+                  </span>
+                )}
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={!g.element || !g.xslt_available || done || !!fixing}
+                  onClick={() => onApply(g.element)}
+                  title={done ? "Already applied to this file; these issues remain after the re-check." : undefined}
+                >
+                  {busy && <Spinner className="h-3.5 w-3.5" />}
+                  {done ? "Micro-XSLT applied" : "Apply micro-XSLT"}
+                </Button>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
+  );
+}
+
 export default function FileErrorsPage({ moduleKey }) {
   const module = moduleByKey(moduleKey);
   const { fileId } = useParams();
   const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const { snapshotId } = useSnapshot();
 
   const [data, setData] = useState(null);
@@ -127,6 +183,13 @@ export default function FileErrorsPage({ moduleKey }) {
   const [reloadToken, setReloadToken] = useState(0);
   const codeRef = useRef(null);
   const listRef = useRef(null);
+
+  // Micro-XSLT: this file's element groups (with stylesheet availability) and run state.
+  const canFix = Boolean(module.fixElement && module.features?.microXslt);
+  const [groups, setGroups] = useState(null);
+  const [applied, setApplied] = useState(() => loadApplied(snapshotId));
+  const [fixing, setFixing] = useState(null);
+  const [notice, setNotice] = useState(null);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -139,6 +202,47 @@ export default function FileErrorsPage({ moduleKey }) {
       .finally(() => !ctrl.signal.aborted && setLoading(false));
     return () => ctrl.abort();
   }, [module, snapshotId, fileId, reloadToken]);
+
+  useEffect(() => {
+    if (!canFix) return;
+    const ctrl = new AbortController();
+    module
+      .getGroups({ snapshotId, fileId, limit: 1, offset: 0, signal: ctrl.signal })
+      .then((res) => setGroups(res.files[0]?.elements || []))
+      .catch((err) => err.name !== "AbortError" && setGroups([]));
+    return () => ctrl.abort();
+  }, [module, canFix, snapshotId, fileId, reloadToken]);
+
+  useEffect(() => setApplied(loadApplied(snapshotId)), [snapshotId]);
+
+  // Same as on the groups page: the file is rewritten in place, Schematron is not re-run.
+  async function applyMicro(element) {
+    setNotice(null);
+    setFixing(element);
+    try {
+      const run = await module.fixElement({ snapshotId, filePath: data.file_path, element });
+      if (run.status !== "failed") {
+        const next = new Set(loadApplied(snapshotId)).add(appliedKey(fileId, element));
+        saveApplied(snapshotId, next);
+        setApplied(next);
+      }
+      setNotice({
+        tone: XSLT_TONE[run.status] || "info",
+        text: xsltSummary(run),
+        detail: run.files_changed ? "Issues stay pending until you click “Re-check pending” on the issues page." : null,
+      });
+      setReloadToken((t) => t + 1);   // show the transformed content
+    } catch (err) {
+      setNotice({ tone: "error", text: err.message });
+    } finally {
+      setFixing(null);
+    }
+  }
+
+  const appliedHere = useMemo(
+    () => new Set((groups || []).map((g) => g.element).filter((e) => applied.has(appliedKey(fileId, e)))),
+    [groups, applied, fileId]
+  );
 
   const { visible, byLine } = useMemo(() => buildView(data?.markers || [], active), [data, active]);
   const unpositioned = useMemo(
@@ -196,10 +300,15 @@ export default function FileErrorsPage({ moduleKey }) {
     select(visible[i].key, { scrollCode: true });
   }
 
+  // Back to where the user came from (page, filter, open files, scroll); the
+  // module's list if this page was opened directly (no earlier entry in the app).
   const backLink = (
-    <ButtonLink variant="secondary" to={module.path}>
+    <Button
+      variant="secondary"
+      onClick={() => (location.key !== "default" ? navigate(-1) : navigate(module.path))}
+    >
       ← {module.title}
-    </ButtonLink>
+    </Button>
   );
 
   if (loading && !data) {
@@ -255,8 +364,16 @@ export default function FileErrorsPage({ moduleKey }) {
         </Alert>
       )}
       {error && <Alert>{error}</Alert>}
+      {notice && (
+        <Alert tone={notice.tone}>
+          <p>{notice.text}</p>
+          {notice.detail && <p className="mt-1">{notice.detail}</p>}
+        </Alert>
+      )}
 
       <SeverityFilter counts={data.counts} active={active} onToggle={toggle} />
+
+      {canFix && <MicroXsltPanel groups={groups} applied={appliedHere} fixing={fixing} onApply={applyMicro} />}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <Card className="overflow-hidden">

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useNavigationType, useSearchParams } from "react-router-dom";
 import { useSnapshot } from "../context/SnapshotContext";
 import { moduleByKey } from "../modules";
 import {
@@ -14,8 +14,28 @@ import {
   Spinner,
   fmt,
 } from "../components/ui";
+import { XSLT_TONE, appliedKey, loadApplied, saveApplied, xsltSummary } from "../xsltRuns";
 
 const PAGE_SIZE = 20;
+
+// Open file cards and scroll position, per tab, so going back from a file's
+// error view shows the list exactly as it was.
+function sessionGet(key, fallback) {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function sessionSet(key, value) {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // storage unavailable; the list just opens in its default state
+  }
+}
 
 function SeverityCounts({ elements }) {
   const counts = {};
@@ -68,9 +88,9 @@ function IssueTable({ issues, lineHref }) {
   );
 }
 
-function ElementGroup({ group, canFix, fixing, onFix, onFilter, lineHref }) {
-  const [open, setOpen] = useState(true);
-  const fixable = canFix && group.xslt_available;
+function ElementGroup({ group, canFix, fixing, applied, onFix, lineHref }) {
+  const [open, setOpen] = useState(false);
+  const fixable = canFix && group.xslt_available && !applied;
   return (
     <div className="rounded-lg border border-slate-200">
       <div className="flex flex-wrap items-center gap-3 bg-slate-50 px-4 py-2.5">
@@ -87,15 +107,6 @@ function ElementGroup({ group, canFix, fixing, onFix, onFilter, lineHref }) {
             {group.issue_count} issue{group.issue_count === 1 ? "" : "s"}
           </span>
         </button>
-        {group.element && (
-          <button
-            type="button"
-            onClick={() => onFilter(group.element)}
-            className="text-xs text-slate-500 underline-offset-2 hover:text-brand-700 hover:underline"
-          >
-            only this element
-          </button>
-        )}
         <div className="ml-auto flex items-center gap-2">
           {group.xslt && (
             <span
@@ -105,9 +116,15 @@ function ElementGroup({ group, canFix, fixing, onFix, onFilter, lineHref }) {
               {group.xslt}
             </span>
           )}
-          <Button size="sm" variant="secondary" disabled={!fixable || fixing} onClick={onFix}>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={!fixable || fixing}
+            onClick={onFix}
+            title={applied ? "Already applied to this file; these issues remain after the re-check." : undefined}
+          >
             {fixing && <Spinner className="h-3.5 w-3.5" />}
-            Apply micro-XSLT
+            {applied ? "Micro-XSLT applied" : "Apply micro-XSLT"}
           </Button>
           {!canFix && <ComingSoon />}
         </div>
@@ -121,14 +138,13 @@ function ElementGroup({ group, canFix, fixing, onFix, onFilter, lineHref }) {
   );
 }
 
-function FileCard({ file, ...groupProps }) {
-  const [open, setOpen] = useState(false);
+function FileCard({ file, open, onToggle, ...groupProps }) {
   return (
     <Card>
       <div className="flex items-center gap-3 px-5 py-4">
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={onToggle}
           className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-left"
           aria-expanded={open}
         >
@@ -152,11 +168,11 @@ function FileCard({ file, ...groupProps }) {
             <ElementGroup
               key={g.element ?? "__unknown"}
               group={g}
-              fixing={groupProps.fixingKey === `${file.file_id}:${g.element}`}
+              fixing={groupProps.fixingKey === appliedKey(file.file_id, g.element)}
+              applied={groupProps.applied.has(appliedKey(file.file_id, g.element))}
               canFix={groupProps.canFix}
               lineHref={groupProps.fileHref && ((line) => groupProps.fileHref(file, line))}
               onFix={() => groupProps.onFix(file, g)}
-              onFilter={groupProps.onFilter}
             />
           ))}
         </div>
@@ -208,16 +224,42 @@ export default function IssueGroupsPage({ moduleKey }) {
   const module = moduleByKey(moduleKey);
   const { snapshotId, workspacePath, runValidation, running } = useSnapshot();
 
-  const [elementInput, setElementInput] = useState("");
-  const [element, setElement] = useState("");
-  const [offset, setOffset] = useState(0);
+  // Filter and page live in the URL (?element=&offset=), so "back" returns to them.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const element = searchParams.get("element") || "";
+  const offset = Math.max(0, Number(searchParams.get("offset")) || 0);
+  const setQuery = (next) => {
+    const params = {};
+    if (next.element) params.element = next.element;
+    if (next.offset) params.offset = String(next.offset);
+    setSearchParams(params, { replace: true });
+  };
+  const setOffset = (value) => setQuery({ element, offset: value });
+
+  const [elementInput, setElementInput] = useState(element);
+  const openKey = `metr-issues:open-files:${snapshotId}:${moduleKey}`;
+  const scrollKey = `metr-issues:scroll:${snapshotId}:${moduleKey}`;
+  const [openFiles, setOpenFiles] = useState(() => sessionGet(openKey, []));
+  const navigationType = useNavigationType();
+  const scrollRestored = useRef(false);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [fixingKey, setFixingKey] = useState(null);
+  const [applied, setApplied] = useState(() => loadApplied(snapshotId));
   const [reloadToken, setReloadToken] = useState(0);
   const reload = useCallback(() => setReloadToken((t) => t + 1), []);
+
+  useEffect(() => setApplied(loadApplied(snapshotId)), [snapshotId]);
+
+  function markApplied(key) {
+    setApplied((prev) => {
+      const next = new Set(prev).add(key);
+      saveApplied(snapshotId, next);
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!module.enabled) return;
@@ -232,29 +274,70 @@ export default function IssueGroupsPage({ moduleKey }) {
     return () => ctrl.abort();
   }, [module, snapshotId, element, offset, reloadToken]);
 
+  // Remember the scroll position when leaving; restore it when coming back (back arrow / browser back).
+  useEffect(() => () => sessionSet(scrollKey, window.scrollY), [scrollKey]);
+  useEffect(() => {
+    if (!data || scrollRestored.current) return;
+    scrollRestored.current = true;
+    const y = sessionGet(scrollKey, 0);
+    if (navigationType === "POP" && y) requestAnimationFrame(() => window.scrollTo(0, y));
+  }, [data, navigationType, scrollKey]);
+
   if (!module.enabled) return <NotConnected module={module} />;
+
+  function toggleFile(fileId) {
+    setOpenFiles((prev) => {
+      const next = prev.includes(fileId) ? prev.filter((id) => id !== fileId) : [...prev, fileId];
+      sessionSet(openKey, next);
+      return next;
+    });
+  }
 
   function applyFilter(value) {
     const v = value.trim();
     setElementInput(v);
-    setElement(v);
-    setOffset(0);
+    setQuery({ element: v, offset: 0 });
+  }
+
+  /** Re-validate files with pending issues; returns {error} or {message}. */
+  async function runRecheck() {
+    const { results, errors } = await runValidation({ snapshotId, workspacePath, mode: "rerun", only: [moduleKey] });
+    reload();
+    return errors[moduleKey]
+      ? { error: errors[moduleKey] }
+      : { message: results[moduleKey]?.message || "Re-check completed." };
   }
 
   async function recheck() {
     setNotice(null);
-    const { results, errors } = await runValidation({ snapshotId, workspacePath, mode: "rerun", only: [moduleKey] });
-    if (errors[moduleKey]) setNotice({ tone: "error", text: errors[moduleKey] });
-    else setNotice({ tone: "success", text: results[moduleKey]?.message || "Re-check completed." });
-    reload();
+    const check = await runRecheck();
+    setNotice(check.error ? { tone: "error", text: check.error } : { tone: "success", text: check.message });
   }
 
+  // XSLT fixes rewrite files in place. After the master XSLT a re-check marks the
+  // issues it fixed; after a micro-XSLT Schematron is not run again ("Re-check
+  // pending" does that when wanted). A micro-XSLT that ran is not offered again
+  // for that file and element: running it on its own output cannot fix what it left.
   async function fix(action, key) {
+    const isMaster = key === "__all";
     setNotice(null);
     setFixingKey(key);
     try {
-      await action();
-      await recheck();
+      const run = await action();
+      if (!isMaster && run.status !== "failed") markApplied(key);
+      let detail;
+      if (isMaster) {
+        const check = await runRecheck();
+        detail = check.error ? `Re-check failed: ${check.error}` : check.message;
+      } else {
+        reload();
+        if (run.files_changed) detail = "Issues stay pending until you click “Re-check pending”.";
+      }
+      setNotice({
+        tone: XSLT_TONE[run.status] || "info",
+        text: xsltSummary(run),
+        detail,
+      });
     } catch (err) {
       setNotice({ tone: "error", text: err.message });
     } finally {
@@ -263,7 +346,10 @@ export default function IssueGroupsPage({ moduleKey }) {
   }
 
   const fixElement = (file, group) =>
-    fix(() => module.fixElement({ snapshotId, fileId: file.file_id, element: group.element }), `${file.file_id}:${group.element}`);
+    fix(
+      () => module.fixElement({ snapshotId, filePath: file.file_path, element: group.element }),
+      appliedKey(file.file_id, group.element)
+    );
   const fixAll = () => fix(() => module.fixAll({ snapshotId }), "__all");
   const fileHref = module.getFileErrors
     ? (file, line) => `${module.path}/files/${encodeURIComponent(file.file_id)}${line ? `?line=${line}` : ""}`
@@ -331,7 +417,12 @@ export default function IssueGroupsPage({ moduleKey }) {
         {loading && <Spinner className="ml-2 h-4 w-4 text-slate-400" />}
       </form>
 
-      {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
+      {notice && (
+        <Alert tone={notice.tone}>
+          <p>{notice.text}</p>
+          {notice.detail && <p className="mt-1">{notice.detail}</p>}
+        </Alert>
+      )}
       {error && <Alert>{error}</Alert>}
 
       {data && !data.files.length && !loading && (
@@ -346,11 +437,13 @@ export default function IssueGroupsPage({ moduleKey }) {
             <FileCard
               key={file.file_id + file.file_path}
               file={file}
+              open={openFiles.includes(file.file_id)}
+              onToggle={() => toggleFile(file.file_id)}
               canFix={module.features.microXslt}
               fileHref={fileHref}
               fixingKey={fixingKey}
+              applied={applied}
               onFix={fixElement}
-              onFilter={applyFilter}
             />
           ))}
           <Pagination total={data.total_files} offset={data.offset} limit={data.limit} onChange={setOffset} />

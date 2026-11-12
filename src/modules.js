@@ -22,8 +22,7 @@ export const MODULES = [
     getGroups: getSchemaIssueGroups,
     // Optional: modules with this get a per-file "View errors" page.
     getFileErrors: getSchemaFileErrors,
-    // Fix actions are still being built on the backend; flip to true once their endpoints exist.
-    features: { microXslt: false, masterXslt: false },
+    features: { microXslt: true, masterXslt: true },
     fixElement: applyMicroXslt,
     fixAll: applyMasterXslt,
   },

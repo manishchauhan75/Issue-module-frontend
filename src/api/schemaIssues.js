@@ -1,4 +1,4 @@
-import { ApiError, request } from "./client";
+import { request } from "./client";
 
 const BASE = "/api/v1/issues/schema";
 
@@ -33,18 +33,20 @@ export function getSchemaFileErrors({ snapshotId, fileId, signal }) {
   });
 }
 
-// --- Not yet implemented on the backend. Endpoints are placeholders. ---
-
-/** Run one element's micro-XSLT over one file (then rerun to mark issues fixed). */
-export async function applyMicroXslt({ snapshotId, fileId, element }) {
-  void snapshotId, fileId, element;
-  throw new ApiError(501, "Micro-XSLT fix is not available yet.");
-  // return request(`${BASE}/fix/micro`, { method: "POST", body: { snapshot_id: snapshotId, file_id: fileId, element } });
+/**
+ * Run one element's micro-XSLT ({element}.xsl) over one file, in place.
+ * filePath is the file's absolute path from /schema/groups.
+ * Issue statuses are only updated by a re-check (rerun) afterwards.
+ */
+export function applyMicroXslt({ snapshotId, filePath, element }) {
+  return request(`${BASE}/microfix`, {
+    method: "POST",
+    body: { snapshot_id: snapshotId, targets: [{ file_path: filePath, elements: [element] }] },
+  });
 }
 
-/** Run the master XSLT over every file with pending issues. */
-export async function applyMasterXslt({ snapshotId }) {
-  void snapshotId;
-  throw new ApiError(501, "Master XSLT fix is not available yet.");
-  // return request(`${BASE}/fix/master`, { method: "POST", body: { snapshot_id: snapshotId } });
+/** Run the master XSLT over every file with pending schema issues, in place. */
+export function applyMasterXslt({ snapshotId }) {
+  // The server uses the workspace the snapshot was validated against.
+  return request(`${BASE}/bulkfix`, { method: "POST", body: { snapshot_id: snapshotId } });
 }
