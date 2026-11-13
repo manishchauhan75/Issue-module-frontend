@@ -37,6 +37,32 @@ function sessionSet(key, value) {
   }
 }
 
+/**
+ * Broken links only: pending links in total and per link type, across all pages.
+ * Clicking a card filters the list to that link type; "Total" clears the filter.
+ */
+function LinkTypeCards({ types, total, counts, active, onSelect }) {
+  const cards = [["", "Total Broken Links", total], ...types.map(([key, label]) => [key, label, counts[key]])];
+  return (
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      {cards.map(([key, label, value]) => (
+        <button
+          key={key || "total"}
+          type="button"
+          onClick={() => onSelect(key)}
+          aria-pressed={active === key}
+          className={`rounded-xl border bg-white px-5 py-4 text-left transition hover:border-brand-600 ${
+            active === key ? "border-brand-600 ring-2 ring-brand-100" : "border-slate-200"
+          }`}
+        >
+          <div className="text-2xl font-bold text-slate-900 tabular-nums">{fmt(value ?? 0)}</div>
+          <div className="mt-1 text-sm text-slate-500">{label}</div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function SeverityCounts({ elements }) {
   const counts = {};
   elements.forEach((g) => g.issues.forEach((i) => i.severity && (counts[i.severity] = (counts[i.severity] || 0) + 1)));
@@ -147,7 +173,7 @@ function ElementGroup({ group, canFix, showFix, fixing, applied, onFix, lineHref
               title={applied ? "Already applied to this file; these issues remain after the re-check." : undefined}
             >
               {fixing && <Spinner className="h-3.5 w-3.5" />}
-              {applied ? "Micro-XSLT applied" : "Apply micro-XSLT"}
+              {applied ? "Fix applied" : "Fix"}
             </Button>
           )}
           {showFix && !canFix && <ComingSoon />}
@@ -268,6 +294,8 @@ export default function IssueGroupsPage({ moduleKey }) {
   const navigationType = useNavigationType();
   const scrollRestored = useRef(false);
   const [data, setData] = useState(null);
+  // Unfiltered link-type counts, so the cards keep every type's number while one is selected.
+  const [linkCounts, setLinkCounts] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -277,6 +305,10 @@ export default function IssueGroupsPage({ moduleKey }) {
   const reload = useCallback(() => setReloadToken((t) => t + 1), []);
 
   useEffect(() => setApplied(loadApplied(snapshotId)), [snapshotId]);
+  useEffect(() => setLinkCounts(null), [snapshotId]);
+  useEffect(() => {
+    if (data?.broken_links && !element) setLinkCounts({ total: data.total_issues, counts: data.broken_links });
+  }, [data, element]);
 
   function markApplied(key) {
     setApplied((prev) => {
@@ -376,6 +408,7 @@ export default function IssueGroupsPage({ moduleKey }) {
       appliedKey(file.file_id, group.element)
     );
   const fixAll = () => fix(() => module.fixAll({ snapshotId }), "__all");
+  const filterLabel = module.filter?.options.find(([key]) => key === element)?.[1];
   const fileHref = module.getFileErrors
     ? (file, line) => `${module.path}/files/${encodeURIComponent(file.file_id)}${line ? `?line=${line}` : ""}`
     : null;
@@ -387,12 +420,15 @@ export default function IssueGroupsPage({ moduleKey }) {
           <h1 className="text-3xl font-bold tracking-tight">{module.title}</h1>
           <p className="mt-1 text-slate-500">
             {data ? `${fmt(data.total_issues)} pending issues in ${fmt(data.total_files)} files` : "Loading…"}
-            {element && (
-              <>
-                {" "}
-                · element <code className="font-mono">&lt;{element}&gt;</code>
-              </>
-            )}
+            {element &&
+              (module.filter ? (
+                <> · {filterLabel || element}</>
+              ) : (
+                <>
+                  {" "}
+                  · element <code className="font-mono">&lt;{element}&gt;</code>
+                </>
+              ))}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -413,6 +449,37 @@ export default function IssueGroupsPage({ moduleKey }) {
         </div>
       </div>
 
+      {module.filter && (linkCounts || data?.broken_links) && (
+        <LinkTypeCards
+          types={module.filter.options}
+          total={linkCounts ? linkCounts.total : data.total_issues}
+          counts={linkCounts ? linkCounts.counts : data.broken_links}
+          active={element}
+          onSelect={applyFilter}
+        />
+      )}
+
+      {module.filter ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="element" className="text-sm text-slate-600">
+            {module.filter.label}
+          </label>
+          <select
+            id="element"
+            value={element}
+            onChange={(e) => applyFilter(e.target.value)}
+            className="w-56 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-100"
+          >
+            <option value="">All</option>
+            {module.filter.options.map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+          {loading && <Spinner className="ml-2 h-4 w-4 text-slate-400" />}
+        </div>
+      ) : (
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -441,6 +508,7 @@ export default function IssueGroupsPage({ moduleKey }) {
         )}
         {loading && <Spinner className="ml-2 h-4 w-4 text-slate-400" />}
       </form>
+      )}
 
       {notice && (
         <Alert tone={notice.tone}>
@@ -452,7 +520,11 @@ export default function IssueGroupsPage({ moduleKey }) {
 
       {data && !data.files.length && !loading && (
         <Card className="px-6 py-12 text-center text-slate-500">
-          {element ? `No pending issues for <${element}>.` : "No pending issues. Everything is fixed."}
+          {!element
+            ? "No pending issues. Everything is fixed."
+            : module.filter
+              ? `No pending ${(filterLabel || element).toLowerCase()} broken links.`
+              : `No pending issues for <${element}>.`}
         </Card>
       )}
 

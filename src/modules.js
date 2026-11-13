@@ -35,8 +35,19 @@ export const MODULES = [
     validate: validateBrokenLinks,
     getGroups: getBrokenLinkGroups,
     getFileErrors: getBrokenLinkFileErrors,
-    // Broken links have no severity: the file view filters and colours them by link type.
+    // The file view filters broken links by link type; keyrefs are warnings, the rest errors.
     viewBy: "link_type",
+    // The groups page filters by link type from a list instead of a typed element name.
+    filter: {
+      label: "Link type",
+      options: [
+        ["image", "Images"],
+        ["external", "External"],
+        ["cross_reference", "Cross-references"],
+        ["keyref", "Keyrefs"],
+        ["conref", "Conrefs"],
+      ],
+    },
     features: {},
   },
   {

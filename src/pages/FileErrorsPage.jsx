@@ -15,8 +15,8 @@ const LINK_TYPES = [
   ["conref", "Conrefs"],
 ];
 
-// How a module's issues are filtered and coloured: by severity (schema) or by
-// link type (broken links, which have no severity and are all shown as errors).
+// How a module's issues are filtered: by severity (schema) or by link type
+// (broken links). Highlights are always coloured by severity.
 const VIEWS = {
   severity: {
     field: "severity",
@@ -28,13 +28,26 @@ const VIEWS = {
     field: "link_type",
     noun: "broken link",
     counts: (data) => data.broken_links,
-    options: LINK_TYPES.map(([key, label]) => ({ key, label, tone: SEVERITY.error })),
+    // keyrefs are warnings; every other link type is an error
+    options: LINK_TYPES.map(([key, label]) => ({
+      key,
+      label,
+      tone: key === "keyref" ? SEVERITY.warning : SEVERITY.error,
+    })),
   },
 };
 
+/** Tone of the most severe issue, or of the issue's filter option when issues have no severity. */
+function toneOf(issues, view) {
+  const severity = SEVERITY_ORDER.find((s) => issues.some((i) => i.severity === s));
+  if (severity) return SEVERITY[severity];
+  return view.options.find((o) => issues.some((i) => i[view.field] === o.key))?.tone || SEVERITY.info;
+}
+
 /**
  * Markers narrowed to the visible options, each with the per-line ranges it covers.
- * A marker takes the tone (and rank) of the first option, in view order, among its issues.
+ * A marker takes the rank of the first option, in view order, among its issues, and the
+ * tone of its most severe issue.
  * API columns are 1-based code-point indexes; ranges here are 0-based, end exclusive.
  */
 function buildView(markers, active, view) {
@@ -44,7 +57,7 @@ function buildView(markers, active, view) {
     const issues = m.issues.filter((i) => active.has(i[view.field]));
     if (!issues.length) continue;
     const rank = view.options.findIndex((o) => issues.some((i) => i[view.field] === o.key));
-    const shown = { ...m, key: markerKey(m), issues, rank, tone: view.options[rank].tone };
+    const shown = { ...m, key: markerKey(m), issues, rank, tone: toneOf(issues, view) };
     visible.push(shown);
     for (let ln = m.start_line; ln <= m.end_line; ln++) {
       const start = ln === m.start_line ? m.start_column - 1 : 0;
@@ -88,14 +101,18 @@ function LineContent({ text, segments, selectedKey, onSelect }) {
   return out.length ? out : " ";
 }
 
-/** Severity badge for schema issues; link-type badge for broken links. */
+/** Severity badge, plus a link-type badge for broken links. */
 function IssueBadge({ issue }) {
-  if (issue.severity) return <SeverityBadge severity={issue.severity} />;
+  const severity = issue.severity && <SeverityBadge severity={issue.severity} />;
+  if (!issue.link_type) return severity;
   const label = LINK_TYPES.find(([key]) => key === issue.link_type)?.[1] || issue.link_type;
   return (
-    <span className="inline-flex h-6 shrink-0 items-center self-start rounded-full bg-red-50 px-2.5 text-xs font-medium whitespace-nowrap text-red-700 ring-1 ring-red-200 ring-inset">
-      {label}
-    </span>
+    <div className="flex shrink-0 flex-col items-start gap-1 self-start">
+      {severity}
+      <span className="inline-flex h-6 items-center rounded-full bg-slate-100 px-2.5 text-xs font-medium whitespace-nowrap text-slate-700 ring-1 ring-slate-200 ring-inset">
+        {label}
+      </span>
+    </div>
   );
 }
 
@@ -206,7 +223,7 @@ function MicroXsltPanel({ groups, applied, fixing, onApply }) {
                   title={done ? "Already applied to this file; these issues remain after the re-check." : undefined}
                 >
                   {busy && <Spinner className="h-3.5 w-3.5" />}
-                  {done ? "Micro-XSLT applied" : "Apply micro-XSLT"}
+                  {done ? "Fix applied" : "Fix"}
                 </Button>
               </span>
             </li>
@@ -515,7 +532,7 @@ export default function FileErrorsPage({ moduleKey }) {
               <li
                 key={issue.finding_key}
                 className={`rounded-md border border-l-4 border-slate-200 px-3 py-2 ${
-                  (view.options.find((o) => o.key === issue[view.field])?.tone || SEVERITY.info).border
+                  toneOf([issue], view).border
                 }`}
               >
                 <div className="flex items-start gap-3">
