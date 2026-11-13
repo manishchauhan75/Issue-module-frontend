@@ -143,12 +143,21 @@ function IssueDetails({ issues }) {
 }
 
 /** Popover shown under the selected marker's last line. */
-function InlineAnnotation({ marker }) {
+function InlineAnnotation({ marker, onClose }) {
   const sev = marker.tone;
   return (
     <div className="sticky left-0 w-[min(48rem,calc(100vw-4rem))] py-1.5 pl-14 font-sans whitespace-normal">
-      <div className={`rounded-md border border-l-4 border-slate-200 bg-white px-3 shadow-sm ${sev.border}`}>
+      <div className={`relative rounded-md border border-l-4 border-slate-200 bg-white pr-9 pl-3 shadow-sm ${sev.border}`}>
         <IssueDetails issues={marker.issues} />
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          title="Close (Esc)"
+          className="absolute top-1.5 right-1.5 flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+        >
+          ✕
+        </button>
       </div>
     </div>
   );
@@ -344,6 +353,20 @@ export default function FileErrorsPage({ moduleKey }) {
     [data, scrollToLine]
   );
 
+  // Clicking the open highlight (or its entry in the list) again closes it.
+  const toggleSelect = useCallback(
+    (key, options) => (key === selectedKey ? setSelectedKey(null) : select(key, options)),
+    [selectedKey, select]
+  );
+
+  // Esc closes the open issue.
+  useEffect(() => {
+    if (!selectedKey) return;
+    const onKey = (e) => e.key === "Escape" && setSelectedKey(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedKey]);
+
   // ?line=N (from the groups page): jump to the marker on that line, or just the line.
   useEffect(() => {
     if (!data) return;
@@ -463,7 +486,8 @@ export default function FileErrorsPage({ moduleKey }) {
             <div className="min-w-max py-2">
               {data.lines.map((text, i) => {
                 const n = i + 1;
-                const dot = gutter.get(n)?.tone;
+                const lineMarker = gutter.get(n);
+                const dot = lineMarker?.tone;
                 const bg = selected && n >= selected.start_line && n <= selected.end_line ? "bg-slate-50" : "bg-white";
                 return (
                   <Fragment key={n}>
@@ -472,15 +496,20 @@ export default function FileErrorsPage({ moduleKey }) {
                       className={`flex ${bg}`}
                       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 1.5rem" }}
                     >
-                      <span className={`sticky left-0 flex w-14 shrink-0 items-center justify-end gap-1.5 pr-3 text-slate-400 select-none ${bg}`}>
+                      <span
+                        onClick={lineMarker ? () => toggleSelect(lineMarker.key) : undefined}
+                        className={`sticky left-0 flex w-14 shrink-0 items-center justify-end gap-1.5 pr-3 text-slate-400 select-none ${bg} ${
+                          lineMarker ? "cursor-pointer hover:text-slate-700" : ""
+                        }`}
+                      >
                         {dot && <span className={`h-2 w-2 rounded-full ${dot.dot}`} />}
                         {n}
                       </span>
                       <span className="pr-6 whitespace-pre text-slate-800">
-                        <LineContent text={text} segments={byLine.get(n)} selectedKey={selectedKey} onSelect={select} />
+                        <LineContent text={text} segments={byLine.get(n)} selectedKey={selectedKey} onSelect={toggleSelect} />
                       </span>
                     </div>
-                    {n === selectedEndLine && <InlineAnnotation marker={selected} />}
+                    {n === selectedEndLine && <InlineAnnotation marker={selected} onClose={() => setSelectedKey(null)} />}
                   </Fragment>
                 );
               })}
@@ -499,7 +528,8 @@ export default function FileErrorsPage({ moduleKey }) {
                 <li key={m.key} data-key={m.key}>
                   <button
                     type="button"
-                    onClick={() => select(m.key, { scrollCode: true })}
+                    onClick={() => toggleSelect(m.key, { scrollCode: true })}
+                    aria-expanded={on}
                     className={`block w-full border-l-4 px-4 py-2.5 text-left transition ${sev.border} ${
                       on ? "bg-slate-100" : "hover:bg-slate-50"
                     }`}

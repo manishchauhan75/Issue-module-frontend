@@ -38,11 +38,15 @@ function sessionSet(key, value) {
 }
 
 /**
- * Broken links only: pending links in total and per link type, across all pages.
- * Clicking a card filters the list to that link type; "Total" clears the filter.
+ * Modules with a filter list (broken links, missing metadata): pending findings in total
+ * and per filter option, across all pages. Clicking a card filters the list to that
+ * option; the total card clears the filter.
  */
-function LinkTypeCards({ types, total, counts, active, onSelect }) {
-  const cards = [["", "Total Broken Links", total], ...types.map(([key, label]) => [key, label, counts[key]])];
+function FilterCards({ filter, total, counts, active, onSelect }) {
+  const options = filter.hideEmptyCards
+    ? filter.options.filter(([key]) => counts[key] || key === active)
+    : filter.options;
+  const cards = [["", filter.totalLabel, total], ...options.map(([key, label]) => [key, label, counts[key]])];
   return (
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
       {cards.map(([key, label, value]) => (
@@ -136,15 +140,24 @@ function IssueTable({ issues, lineHref }) {
   );
 }
 
-function ElementGroup({ group, canFix, showFix, fixing, applied, onFix, lineHref }) {
+function ElementGroup({ group, label, parentLabel, canFix, showFix, fixing, applied, onFix, lineHref }) {
   const [open, setOpen] = useState(false);
   const fixable = canFix && group.xslt_available && !applied;
   return (
-    <div className="rounded-lg border border-slate-200">
+    // Nested items (missing metadata: prolog > critdates > created) are indented under their parent.
+    <div
+      className={`rounded-lg border border-slate-200 ${group.depth ? "border-l-4 border-l-slate-300" : ""}`}
+      style={group.depth ? { marginLeft: `${group.depth * 1.5}rem` } : undefined}
+    >
       <div className="flex flex-wrap items-center gap-3 bg-slate-50 px-4 py-2.5">
         <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-2" aria-expanded={open}>
           <span className={`text-[10px] text-slate-500 transition-transform ${open ? "" : "-rotate-90"}`}>▼</span>
-          {group.element ? (
+          {label ? (
+            <span className="text-sm font-semibold text-brand-700">
+              {label}
+              {group.parent && <span className="ml-1.5 font-normal text-slate-400">in {parentLabel || group.parent}</span>}
+            </span>
+          ) : group.element ? (
             <code className="rounded bg-white px-1.5 py-0.5 text-sm font-semibold text-brand-700 ring-1 ring-slate-200">
               &lt;{group.element}&gt;
             </code>
@@ -218,6 +231,8 @@ function FileCard({ file, open, onToggle, ...groupProps }) {
             <ElementGroup
               key={g.element ?? "__unknown"}
               group={g}
+              label={groupProps.groupLabel?.(g.element)}
+              parentLabel={g.parent && groupProps.groupLabel?.(g.parent)}
               fixing={groupProps.fixingKey === appliedKey(file.file_id, g.element)}
               applied={groupProps.applied.has(appliedKey(file.file_id, g.element))}
               canFix={groupProps.canFix}
@@ -294,8 +309,9 @@ export default function IssueGroupsPage({ moduleKey }) {
   const navigationType = useNavigationType();
   const scrollRestored = useRef(false);
   const [data, setData] = useState(null);
-  // Unfiltered link-type counts, so the cards keep every type's number while one is selected.
-  const [linkCounts, setLinkCounts] = useState(null);
+  // Unfiltered per-option counts, so the cards keep every option's number while one is selected.
+  const [filterCounts, setFilterCounts] = useState(null);
+  const countsField = module.filter?.countsField;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -305,10 +321,10 @@ export default function IssueGroupsPage({ moduleKey }) {
   const reload = useCallback(() => setReloadToken((t) => t + 1), []);
 
   useEffect(() => setApplied(loadApplied(snapshotId)), [snapshotId]);
-  useEffect(() => setLinkCounts(null), [snapshotId]);
+  useEffect(() => setFilterCounts(null), [snapshotId]);
   useEffect(() => {
-    if (data?.broken_links && !element) setLinkCounts({ total: data.total_issues, counts: data.broken_links });
-  }, [data, element]);
+    if (data?.[countsField] && !element) setFilterCounts({ total: data.total_issues, counts: data[countsField] });
+  }, [data, element, countsField]);
 
   function markApplied(key) {
     setApplied((prev) => {
@@ -449,11 +465,11 @@ export default function IssueGroupsPage({ moduleKey }) {
         </div>
       </div>
 
-      {module.filter && (linkCounts || data?.broken_links) && (
-        <LinkTypeCards
-          types={module.filter.options}
-          total={linkCounts ? linkCounts.total : data.total_issues}
-          counts={linkCounts ? linkCounts.counts : data.broken_links}
+      {module.filter && (filterCounts || data?.[countsField]) && (
+        <FilterCards
+          filter={module.filter}
+          total={filterCounts ? filterCounts.total : data.total_issues}
+          counts={filterCounts ? filterCounts.counts : data[countsField]}
           active={element}
           onSelect={applyFilter}
         />
@@ -471,8 +487,9 @@ export default function IssueGroupsPage({ moduleKey }) {
             className="w-56 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-100"
           >
             <option value="">All</option>
-            {module.filter.options.map(([key, label]) => (
+            {module.filter.options.map(([key, label, depth = 0]) => (
               <option key={key} value={key}>
+                {"   ".repeat(depth)}
                 {label}
               </option>
             ))}
@@ -523,7 +540,7 @@ export default function IssueGroupsPage({ moduleKey }) {
           {!element
             ? "No pending issues. Everything is fixed."
             : module.filter
-              ? `No pending ${(filterLabel || element).toLowerCase()} broken links.`
+              ? `No pending issues for ${filterLabel || element}.`
               : `No pending issues for <${element}>.`}
         </Card>
       )}
@@ -539,6 +556,7 @@ export default function IssueGroupsPage({ moduleKey }) {
               canFix={module.features.microXslt}
               showFix={!!module.fixElement}
               fileHref={fileHref}
+              groupLabel={module.filter && ((key) => module.filter.options.find(([k]) => k === key)?.[1])}
               fixingKey={fixingKey}
               applied={applied}
               onFix={fixElement}
